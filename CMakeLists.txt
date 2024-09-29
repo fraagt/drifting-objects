@@ -4,7 +4,6 @@ project(drifting-objects)
 set(CMAKE_CXX_STANDARD 17)
 
 add_subdirectory(extern)
-
 add_subdirectory(src)
 
 set(CMAKE_EXE_LINKER_FLAGS "-static")

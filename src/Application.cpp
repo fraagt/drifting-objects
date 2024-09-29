@@ -1,32 +1,37 @@
 #include <cstdlib>
 #include <iostream>
 #include <ctime>
+#include <chrono>
+#include <thread>
 #include "Application.hpp"
 #include "tiny_obj_loader.h"
 #include "utils/files.hpp"
+#include "Camera.hpp"
+#include "Mesh.hpp"
+#include "Shader.hpp"
+#include "glfwxx/KeyCode.hpp"
+#include "glfwxx/BufferUsage.hpp"
 
-int size = 10;  // Grid dimension, so the total number of cubes is gridSize^2
-float cubeSize = 1.0f;
+typedef struct {
+    glm::vec3 position;
+    glm::vec3 color;
+} InstanceData;
+
+
+int size = 75;  // Grid dimension, so the total number of cubes is gridSize^2
+float objectSize = 1.0f;
 float interval = 0.5f;
 
+int objectCount = size * size * size;
+
 // Compute the total span for the grid to center it at 0
-float spanY = static_cast<float>(size - 1) * (cubeSize + interval);
-float spanZ = static_cast<float>(size - 1) * (cubeSize + interval);
+float span = static_cast<float>(size - 1) * (objectSize + interval);
+float startOffset = -span / 2.0f;
 
-// Start positions to center the grid
-float startPosY = -spanY / 2.0f;
-float startPosZ = -spanZ / 2.0f;
-
-float moveSpeed = 1.0f;
-float moveSpeedDeltaRatio = 0.4f;
-float moveSpeedDelta = moveSpeed * moveSpeedDeltaRatio;
-
-float maxSpeed = moveSpeed * (1.0f + moveSpeedDeltaRatio);
-
-float rotationSpeed = 90.0f;
-float rotationSpeedDeltaRatio = 0.6f;
-float rotationSpeedDelta = rotationSpeed * rotationSpeedDeltaRatio;
-
+std::unique_ptr<Camera> camera;
+std::unique_ptr<Mesh> mesh;
+std::unique_ptr<Shader> shader;
+std::vector<InstanceData> instanceData;
 
 float lastTime = 0.0f;          // Time of the last frame
 float lastDelta = 1.0f / 60.0f; // Smoothed delta time
@@ -40,7 +45,7 @@ Application::Application() {
     m_height = 720;
     m_title = "SpinningSpheres";
 
-//    std::srand(std::time(nullptr));
+    std::srand(std::time(nullptr));
 
     glfwInit();
 
@@ -68,50 +73,34 @@ Application::Application() {
 //    glEnable(GL_CULL_FACE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-//    glfwSwapInterval(0);
+    glfwSwapInterval(1);
 
     for (int i = 0; i < size; ++i) {
         for (int j = 0; j < size; ++j) {
-            Transform transform;
+            for (int k = 0; k < size; ++k) {
+                InstanceData objectInstanceData;
 
-            // Set initial position for the cube, centered at (0, 0, 0)
-            transform.position.y = startPosY + static_cast<float>(i) * (cubeSize + interval);
-            transform.position.z = startPosZ + static_cast<float>(j) * (cubeSize + interval);
+                // Calculate the position
+                objectInstanceData.position.x = startOffset + static_cast<float>(k) * (objectSize + interval);
+                objectInstanceData.position.y = startOffset + static_cast<float>(i) * (objectSize + interval);
+                objectInstanceData.position.z = startOffset + static_cast<float>(j) * (objectSize + interval);
 
+                objectInstanceData.color.r = static_cast<float>(rand() % 256) / 255.0f;
+                objectInstanceData.color.g = static_cast<float>(rand() % 256) / 255.0f;
+                objectInstanceData.color.b = static_cast<float>(rand() % 256) / 255.0f;
 
-            auto objectMoveSpeed = moveSpeed - (moveSpeedDelta / 2.0f) +
-                                   (static_cast<float>(std::rand() % 1001) / 1000.0f) * moveSpeedDelta;
-
-
-            auto objectRotationSpeed = rotationSpeed - (rotationSpeedDelta / 2.0f) +
-                                       (static_cast<float>(std::rand() % 1001) / 1000.0f) * rotationSpeedDelta;
-
-            glm::vec3 rotationDirection{
-                    (static_cast<float>(std::rand() % 1001) / 1000.0f) * 2.0f - 1.0f,
-                    (static_cast<float>(std::rand() % 1001) / 1000.0f) * 2.0f - 1.0f,
-                    (static_cast<float>(std::rand() % 1001) / 1000.0f) * 2.0f - 1.0f};
-
-            glm::vec3 velocity{
-                    (static_cast<float>(std::rand() % 1001) / 1000.0f) * 2.0f - 1.0f,
-                    (static_cast<float>(std::rand() % 1001) / 1000.0f) * 2.0f - 1.0f,
-                    (static_cast<float>(std::rand() % 1001) / 1000.0f) * 2.0f - 1.0f
-            };
-
-            m_moveSpeeds.emplace_back(objectMoveSpeed);
-            m_rotationSpeeds.emplace_back(objectRotationSpeed);
-            m_transforms.emplace_back(transform);
-            m_rotateDirections.emplace_back(rotationDirection);
-            m_velocities.emplace_back(velocity);
+                instanceData.emplace_back(objectInstanceData);
+            }
         }
     }
 
-    m_pCamera = std::make_unique<Camera>();
+    camera = std::make_unique<Camera>();
 
-    m_pCamera->transform.position.x -= 25.0f;
-    m_pCamera->fov = 45.0f;
-    m_pCamera->m_plane = glm::vec2(m_width, m_height);
-    m_pCamera->m_zNear = 0.1f;
-    m_pCamera->m_zFar = 100.0f;
+    camera->transform.position.x -= 25.0f;
+    camera->fov = 45.0f;
+    camera->m_plane = glm::vec2(m_width, m_height);
+    camera->m_zNear = 0.1f;
+    camera->m_zFar = 1000.0f;
 
 
     tinyobj::attrib_t attrib;
@@ -142,12 +131,22 @@ Application::Application() {
         indices.push_back(i);
     }
 
-    m_pMesh = std::make_unique<Mesh>(vertices, indices);
+    mesh = std::make_unique<Mesh>(vertices, indices);
 
-    std::string vertexShaderCode = utils::readFile("assets\\shaders\\default.vert");
-    std::string fragmentShaderCode = utils::readFile("assets\\shaders\\default.frag");
+    std::vector<AttributeLayout> layout = {
+            {2, 3, GL_FLOAT, GL_FALSE, sizeof(InstanceData), offsetof(InstanceData, position), 1},
+            {3, 3, GL_FLOAT, GL_FALSE, sizeof(InstanceData), offsetof(InstanceData, color),    1}
+    };
 
-    m_pShader = std::make_unique<Shader>(vertexShaderCode.c_str(), fragmentShaderCode.c_str());
+    mesh->addInstanceBuffer(layout,
+                            objectCount * sizeof(InstanceData),
+                            instanceData.data(),
+                            glfwxx::BufferUsage::StaticDraw);
+
+    std::string vertexShaderCode = utils::readFile("assets\\shaders\\instanced.vert");
+    std::string fragmentShaderCode = utils::readFile("assets\\shaders\\instanced.frag");
+
+    shader = std::make_unique<Shader>(vertexShaderCode.c_str(), fragmentShaderCode.c_str());
 
     glViewport(0, 0, m_width, m_height);
 }
@@ -156,6 +155,8 @@ void Application::run() {
     startTime = static_cast<float>(glfwGetTime());
 
     while (!glfwWindowShouldClose(m_pWindow)) {
+        auto frameStartTime = std::chrono::high_resolution_clock::now(); // Start time of the frame
+
         glfwPollEvents();
 
         auto currentTime = static_cast<float>(glfwGetTime());
@@ -183,48 +184,67 @@ void Application::run() {
             fpsTime = 0.0f;
             frameCount = 0;
         }
-
-        for (int i = 0; i < m_transforms.size(); ++i) {
-            auto &transform = m_transforms[i];
-            auto &objectMoveSpeed = m_moveSpeeds[i];
-            auto &objectRotationSpeed = m_rotationSpeeds[i];
-            auto &rotateDirection = m_rotateDirections[i];
-            auto &velocity = m_velocities[i];
-
-            auto moveStep = velocity * objectMoveSpeed * delta;
-            auto rotationStep = rotateDirection * objectRotationSpeed * delta;
-
-            transform.position += moveStep;
-            transform.rotation += rotationStep;
-
-            // Gradually change velocity
-            float changeAmount = 0.1f; // Controls how much the velocity changes each frame
-
-            glm::vec3 randomChange{
-                    (static_cast<float>(std::rand() % 1001) / 1000.0f) * 2.0f - 1.0f,  // Random perturbation in X
-                    (static_cast<float>(std::rand() % 1001) / 1000.0f) * 2.0f - 1.0f,  // Random perturbation in Y
-                    (static_cast<float>(std::rand() % 1001) / 1000.0f) * 2.0f - 1.0f   // Random perturbation in Z
-            };
-
-            velocity += randomChange * changeAmount;  // Add small random change to velocity
-
-            // Clamp the velocity to a reasonable magnitude to avoid extreme speeds
-            float speed = glm::length(velocity);
+        auto cameraMoveSpeed = 25.0f;
+        auto cameraRotateSpeed = 25.0f;
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::A)) {
+            camera->transform.position.z -= cameraMoveSpeed * delta;
+        }
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::D)) {
+            camera->transform.position.z += cameraMoveSpeed * delta;
+        }
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::W)) {
+            camera->transform.position.x += cameraMoveSpeed * delta;
+        }
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::S)) {
+            camera->transform.position.x -= cameraMoveSpeed * delta;
+        }
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::Q)) {
+            camera->transform.position.y += cameraMoveSpeed * delta;
+        }
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::E)) {
+            camera->transform.position.y -= cameraMoveSpeed * delta;
+        }
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::Left)) {
+            camera->transform.rotation.y -= cameraRotateSpeed * delta;
+        }
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::Right)) {
+            camera->transform.rotation.y += cameraRotateSpeed * delta;
+        }
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::Up)) {
+            camera->transform.rotation.x += cameraRotateSpeed * delta;
+        }
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::Down)) {
+            camera->transform.rotation.x -= cameraRotateSpeed * delta;
+        }
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::LeftShift)) {
+            cameraMoveSpeed *= 1.15f;
+        }
+        if (glfwGetKey(m_pWindow, glfwxx::KeyCode::LeftControl)) {
+            cameraMoveSpeed /= 1.15f;
         }
 
+        glfwxx::KeyCode val = glfwxx::KeyCode::G;
+        val.value();
 
         glClearColor(0.10f, 0.15f, 0.20f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        m_pShader->use();
+        shader->use();
 
-        for (const auto &trans: m_transforms) {
-            auto mvp = m_pCamera->getProjection() * m_pCamera->getView() * trans.getMatrix();
+//        for (int i = 0; i < objectCount; ++i) {
+//            auto model = glm::translate(glm::identity<glm::mat4>(), instanceData[i].position);
+//            auto mvp = camera->getProjection() * camera->getView() * model;
+//
+//            shader->setMatrix4fv("transform", mvp);
+//            mesh->draw();
+//        }
 
-            m_pShader->setMatrix4fv("transform", mvp);
+        auto mvp = camera->getProjection() * camera->getView() * glm::identity<glm::mat4>();
 
-            m_pMesh->draw();
-        }
+        shader->use();
+        shader->setMatrix4fv("transform", mvp);
+
+        mesh->drawInstanced(objectCount);
 
         glfwSwapBuffers(m_pWindow);
     }

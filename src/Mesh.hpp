@@ -1,23 +1,38 @@
 #pragma once
 
-#include <vector>
-#include <memory>
 #include "utils/Common.hpp"
-#include "glm/vec3.hpp"
+#include <vector>
 #include "Vertex.hpp"
+#include "AttributeLayout.hpp"
+#include "glfwxx/BufferUsage.hpp"
 
 class Mesh {
 public:
-    Mesh(const std::vector<Vertex> &vertices, const std::vector<GLuint> &indices);
+    Mesh();
+
+    Mesh(const std::vector<Vertex> &vertices, const std::vector<unsigned int> &indices);
+
+    ~Mesh();
 
     void draw();
 
-private:
-    std::vector<Vertex> m_vertices;
-    std::vector<GLuint> m_indices;
+    void drawInstanced(int instanceCount);
 
-    GLuint m_vbo;
-    GLuint m_vao;
-    GLuint m_ebo;
-    GLenum m_mode;
+    void setupMesh(const std::vector<Vertex> &vertices,
+                   const std::vector<unsigned int> &indices);
+
+    void addInstanceBuffer(const std::vector<AttributeLayout> &layout,
+                           GLsizei dataSize,
+                           const void *data,
+                           glfwxx::BufferUsage usage);
+
+private:
+    void setupMesh();
+
+    GLenum mode;
+    GLuint VAO, VBO, EBO;
+    std::vector<GLuint> instanceVBOs;
+
+    std::vector<Vertex> vertices;
+    std::vector<unsigned int> indices;
 };

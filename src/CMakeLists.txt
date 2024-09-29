@@ -15,6 +15,8 @@ set(SOURCES
         Shader.cpp
         utils/not_defined.hpp
         utils/files.hpp
+        glfwxx/KeyCode.hpp
+        glfwxx/BufferUsage.hpp
 )
 
 # Prepend "src/" to every source file
